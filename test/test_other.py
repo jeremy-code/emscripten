@@ -3748,6 +3748,17 @@ More info: https://emscripten.org
     cmd = shared.get_npm_cmd('tsc') + [test_file('other/test_tsd_sync.ts'), '--noEmit']
     shared.check_call(cmd)
 
+  @requires_dev_dependency('typescript')
+  def test_emit_tsd_integer(self):
+    self.run_process([EMCC, test_file('other/test_emit_tsd.c'),
+                      '--emit-tsd', 'test_emit_tsd_integer.d.ts', '-sEXPORT_ES6',
+                      '-sMODULARIZE', '-sEXPORTED_RUNTIME_METHODS=POINTER_SIZE',
+                      '-Wno-experimental', '-o', 'test_emit_tsd_integer.js'] +
+                     self.get_cflags())
+    self.assertFileContents(test_file('other/test_emit_tsd_integer.d.ts'), read_file('test_emit_tsd_integer.d.ts'))
+    cmd = shared.get_npm_cmd('tsc') + [test_file('other/test_tsd_integer.ts'), '--noEmit']
+    shared.check_call(cmd)
+
   def test_emit_tsd_wasm_only(self):
     expected = 'Wasm only output is not compatible with --emit-tsd'
     self.assert_fail([EMCC, test_file('other/test_emit_tsd.c'), '--emit-tsd', 'test_emit_tsd_wasm_only.d.ts', '-o', 'out.wasm'], expected)
