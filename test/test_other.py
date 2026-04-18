@@ -5615,7 +5615,9 @@ int main()
 
   @also_with_standalone_wasm(impure=True)
   def test_time(self):
-    self.do_other_test('test_time.c')
+    if self.get_setting('STANDALONE_WASM'):
+      self.cflags.append('-DSTANDALONE')
+    self.do_other_test('test_time.c', cflags=['-sASSERTIONS=2'])
 
   @parameterized({
     '1': ('EST+05EDT',),
@@ -9695,6 +9697,8 @@ int main() {
 
   def test_emsymbolizer_srcloc(self):
     'Test emsymbolizer use cases that provide src location granularity info'
+    self.skipTest('TODO: Re-enable when https://github.com/llvm/llvm-project/pull/191329 rolls')
+
     def check_dwarf_loc_info(address, funcs, locs):
       out = self.run_process(
           [emsymbolizer, '-s', 'dwarf', 'test_dwarf.wasm', address],
@@ -11762,6 +11766,16 @@ int main(void) {
     expected = ['got: hello world string, longer than 16 chars', 'pthread_create: environment does not support SharedArrayBuffer, pthreads are not available']
     self.do_runf('hello_world.c', expected, assert_all=True, assert_returncode=NON_ZERO, cflags=['--pre-js=pre.js'])
 
+  @requires_node
+  @requires_pthreads
+  def test_pthread_mem_leak(self):
+    self.set_setting('MODULARIZE')
+    self.set_setting('EXIT_RUNTIME')
+    self.set_setting('EXPORTED_RUNTIME_METHODS', ['wasmMemory'])
+    self.node_args.append('--expose-gc')
+    self.cflags += ['--extern-post-js', test_file('pthread/test_pthread_mem_leak_post.js')]
+    self.do_runf('hello_world.c', 'SUCCESS: No leak detected', cflags=['-pthread'])
+
   def test_stdin_preprocess(self):
     create_file('temp.h', '#include <string>')
     outputStdin = self.run_process([EMCC, '-x', 'c++', '-dM', '-E', '-'], input="#include <string>", stdout=PIPE).stdout
@@ -12052,6 +12066,7 @@ int main(int argc, char **argv) {
 }''')
     self.do_runf('src.c', cflags=['-O3', '-sWASM=0'])
 
+  @crossplatform
   def test_deterministic(self):
     # test some things that may not be nondeterministic
     create_file('src.c', r'''
@@ -12069,7 +12084,7 @@ int main () {
   printf("JS random: %d\n", EM_ASM_INT({ return Math.random() }));
 }
 ''')
-    self.run_process([EMCC, 'src.c', '-sDETERMINISTIC'] + self.get_cflags())
+    self.run_process([EMCC, 'src.c', '-sDETERMINISTIC', '-Wno-deprecated'] + self.get_cflags())
     one = self.run_js('a.out.js')
     # ensure even if the time resolution is 1 second, that if we see the real
     # time we'll see a difference
@@ -13048,6 +13063,21 @@ void foo() {}
   def test_pthread_kill(self):
     self.do_run_in_out_file_test('pthread/test_pthread_kill.c')
 
+  @parameterized({
+    '': (['-pthread'],),
+    'stub': ([],),
+  })
+  def test_pthread_kill_self(self, args):
+    self.do_runf('pthread/test_pthread_kill_self.c', 'main\n', assert_returncode=NON_ZERO, cflags=args)
+
+  @requires_pthreads
+  @parameterized({
+    '': (['-sPTHREAD_POOL_SIZE=1'],),
+    'proxied': (['-sPROXY_TO_PTHREAD', '-sEXIT_RUNTIME'],),
+  })
+  def test_pthread_sigmask(self, args):
+    self.do_runf('pthread/test_pthread_sigmask.c', 'done\n', cflags=args)
+
   # Tests memory growth in pthreads mode, but still on the main thread.
   @requires_pthreads
   @parameterized({
@@ -13174,7 +13204,6 @@ void foo() {}
 
   @also_with_noderawfs
   @crossplatform
-  @no_deno('https://github.com/denoland/deno/issues/32995')
   def test_unistd_isatty(self):
     if '-DNODERAWFS' in self.cflags:
       # Under NODERAWFS istty reports accurate information about the file descriptors
@@ -13424,15 +13453,6 @@ myMethod: 43
     self.do_runf('test.c', expected, cflags=['--closure=1'], output_basename='test_closure')
     check_for_es6('test_closure.js', False)
 
-  def test_node_prefix_transpile(self):
-    self.run_process([EMCC, test_file('hello_world.c'), '-sEXPORT_ES6'])
-    content = read_file('a.out.js')
-    self.assertContained('node:', content)
-
-    self.run_process([EMCC, test_file('hello_world.c'), '-sEXPORT_ES6', '-sMIN_NODE_VERSION=150000', '-Wno-transpile'])
-    content = read_file('a.out.js')
-    self.assertNotContained('node:', content)
-
   def test_gmtime_noleak(self):
     # Confirm that gmtime_r does not leak when called in isolation.
     self.do_other_test('test_gmtime_noleak.c', cflags=['-fsanitize=leak'])
@@ -13495,6 +13515,7 @@ int main() {
     # Ensure that files referenced in Tutorial.rst are buildable
     self.run_process([EMCC, test_file('hello_world_file.cpp')])
 
+  @crossplatform
   @also_with_wasm64
   def test_stdint_limits(self):
     if self.is_wasm64():

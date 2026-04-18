@@ -905,6 +905,8 @@ class SjLjLibrary(Library):
 
 class MuslInternalLibrary(Library):
   includes = [
+    'system/lib/libc/musl/arch/emscripten',
+    'system/lib/libc/musl/arch/generic',
     'system/lib/libc/musl/src/internal',
     'system/lib/libc/musl/src/include',
     'system/lib/libc/musl/include',
@@ -918,6 +920,7 @@ class MuslInternalLibrary(Library):
     '-Wno-unused-result',  # system call results are often ignored in musl, and in wasi that warns
     '-Wno-bitwise-op-parentheses',
     '-Wno-shift-op-parentheses',
+    '-Wno-constant-conversion',
   ]
 
 
@@ -1302,6 +1305,7 @@ class libc(MuslInternalLibrary,
       libc_files += files_in_path(
         path='system/lib/pthread',
         filenames=[
+          'emscripten_get_next_tid.c',
           'emscripten_thread_state.S',
           'emscripten_thread_primitives.c',
           'emscripten_futex_wait.c',
@@ -1522,7 +1526,7 @@ class libwasm_workers(MuslInternalLibrary, DebugLibrary):
   name = 'libwasm_workers'
   includes = ['system/lib/libc']
   src_dir = 'system/lib/wasm_worker'
-  src_files = ['library_wasm_worker.c', 'wasm_worker_initialize.S']
+  src_files = ['library_wasm_worker.c', 'wasm_worker_initialize.S', 'audio_worklet.c']
 
   def get_cflags(self):
     cflags = super().get_cflags() + ['-sWASM_WORKERS']
@@ -1605,8 +1609,10 @@ class crt1_proxy_main(MuslInternalLibrary):
     return super().can_use() and settings.PROXY_TO_PTHREAD
 
 
-class crtbegin(MuslInternalLibrary):
-  name = 'crtbegin'
+class crtbegin_mt(MuslInternalLibrary):
+  # This library defines _emscripten_tls_init/_emscripten_tls_free which are linked into
+  # every module (i.e. not just the main module).
+  name = 'crtbegin-mt'
   cflags = ['-pthread']
   src_dir = 'system/lib/pthread'
   src_files = ['emscripten_tls_init.c']
@@ -1617,7 +1623,7 @@ class crtbegin(MuslInternalLibrary):
     return '.o'
 
   def can_use(self):
-    return super().can_use() and settings.SHARED_MEMORY
+    return super().can_use() and settings.PTHREADS
 
 
 class libcxxabi(ExceptionLibrary, MTLibrary, DebugLibrary):
@@ -2327,8 +2333,8 @@ def get_libs_to_link(options):
     libs_to_link.append((lib.get_link_flag(), whole_archive or need_whole_archive))
 
   if not options.nostartfiles:
-    if settings.SHARED_MEMORY:
-      add_library('crtbegin')
+    if settings.PTHREADS:
+      add_library('crtbegin-mt')
 
     if not settings.SIDE_MODULE:
       if settings.STANDALONE_WASM:
@@ -2500,10 +2506,10 @@ def install_system_headers(stamp):
     'system/lib/compiler-rt/include': '',
     'system/lib/libunwind/include': '',
     # Copy the generic arch files first then
-    'system/lib/libc/musl/arch/generic': '',
+    'system/lib/libc/musl/arch/generic/bits': 'bits',
     # Then overlay the emscripten directory on top.
     # This mimics how musl itself installs its headers.
-    'system/lib/libc/musl/arch/emscripten': '',
+    'system/lib/libc/musl/arch/emscripten/bits': 'bits',
     'system/lib/libc/musl/include': '',
     'system/lib/libcxx/include': 'c++/v1',
     'system/lib/libcxxabi/include': 'c++/v1',
